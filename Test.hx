@@ -93,6 +93,52 @@ class Test extends TestCase {
 		assertScript("var a:Array<Dynamic>=[1,2,4]; a[2]", 4, null, true);
 		assertScript("/**/0", 0);
 		assertScript("x=1;x*=-2", -2);
+		
+		// Test propertyNotFound
+    var p1 = "dynamic property [p1]";
+    var p21 = "dynamic nested property [p21]";
+    var p3 = "dynamic nested property from call [p3]";
+    
+    var m1 = "dynamic call [m1]";
+    var m21 = "dynamic nested call [m21]";
+    var m3 = "dynamic nested call from property [m3]";
+    
+    var vars = 
+    {
+      f: function(v) {return 'argument received: $v'; },
+      propertyNotFound: function(p, err)
+      {
+        var r: Dynamic = null;
+        if(p == 'p1')
+          r = p1;
+        else if(p == 'p2')
+          r = { p21: p21, m3: function() return m3 };
+        else if(p == 'm1')
+          r = function() return m1;
+        else if(p == 'm2')
+          r = function() return { m21: function() return m21, p3: p3 };
+        else if(p == 'mp1')
+          r = function(v) return 'dynamic call [mp1] with arguments [$v]';
+        else if(p == 'mp2')
+          r = function(v1, v2) return 'dynamic call [mp1] with arguments [$v1, $v2]';
+        else
+          err();
+        return r;
+      }
+    };
+       
+    assertScript("p1", p1, vars);
+    assertScript("p2.p21", p21, vars);
+    assertScript("f(p1)", 'argument received: $p1', vars);
+
+    assertScript("m1()", m1, vars);
+    assertScript("m2().m21()", m21, vars);
+    assertScript("p2.m3()", m3, vars);
+    assertScript("m2().p3", p3, vars);
+    
+    assertScript("mp1(p1)", 'dynamic call [mp1] with arguments [$p1]', vars);
+    assertScript("mp1(m1())", 'dynamic call [mp1] with arguments [$m1]', vars);
+    assertScript("mp2(p1, m1())", 'dynamic call [mp1] with arguments [$p1, $m1]', vars);
 	}
 
 	static function main() {
