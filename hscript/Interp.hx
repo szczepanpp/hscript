@@ -32,6 +32,7 @@ private enum Stop {
 }
 
 class Interp {
+  public inline static var PROPERTY_NOT_FOUND = "propertyNotFound";
 
 	#if haxe3
 	public var variables : Map<String,Dynamic>;
@@ -64,6 +65,7 @@ class Interp {
 		variables.set("true",true);
 		variables.set("false",false);
 		variables.set("trace",function(e) haxe.Log.trace(Std.string(e),cast { fileName : "hscript", lineNumber : 0 }));
+    variables.set(PROPERTY_NOT_FOUND, function(m: String, err: Void->Void): Dynamic { err(); return null; });
 		initOps();
 	}
 
@@ -261,7 +263,7 @@ class Interp {
 			return l.r;
 		var v = variables.get(id);
 		if( v == null && !variables.exists(id) )
-			error(EUnknownVariable(id));
+      v = call(null, resolve(PROPERTY_NOT_FOUND), [id, function() return error(EUnknownVariable(id))]);
 		return v;
 	}
 
