@@ -77,6 +77,7 @@ class Parser {
 	var uid : Int = 0;
 
 	#if hscriptPos
+	var origin : String;
 	var readPos : Int;
 	var tokenMin : Int;
 	var tokenMax : Int;
@@ -111,7 +112,7 @@ class Parser {
 			["..."],
 			["&&"],
 			["||"],
-			["=","+=","-=","*=","/=","%=","<<=",">>=",">>>=","|=","&=","^="],
+			["=","+=","-=","*=","/=","%=","<<=",">>=",">>>=","|=","&=","^=","=>"],
 		];
 		#if haxe3
 		opPriority = new Map();
@@ -133,7 +134,7 @@ class Parser {
 
 	public inline function error( err, pmin, pmax ) {
 		#if hscriptPos
-		throw new Error(err, pmin, pmax);
+		throw new Error(err, pmin, pmax, origin, line);
 		#else
 		throw err;
 		#end
@@ -143,14 +144,15 @@ class Parser {
 		error(EInvalidChar(c), readPos, readPos);
 	}
 
-	public function parseString( s : String ) {
-		line = 1;
+	public function parseString( s : String, ?origin : String = "hscript" ) {
 		uid = 0;
-		return parse( new haxe.io.StringInput(s) );
+		return parse( new haxe.io.StringInput(s), origin );
 	}
 
-	public function parse( s : haxe.io.Input ) {
+	public function parse( s : haxe.io.Input, ?origin : String = "hscript" ) {
+		line = 1;
 		#if hscriptPos
+		this.origin = origin;
 		readPos = 0;
 		tokenMin = oldTokenMin = 0;
 		tokenMax = oldTokenMax = 0;
@@ -224,9 +226,10 @@ class Parser {
 
 	inline function mk(e,?pmin,?pmax) : Expr {
 		#if hscriptPos
+		if( e == null ) return null;
 		if( pmin == null ) pmin = tokenMin;
 		if( pmax == null ) pmax = tokenMax;
-		return { e : e, pmin : pmin, pmax : pmax };
+		return { e : e, pmin : pmin, pmax : pmax, origin : origin, line : line };
 		#else
 		return e;
 		#end
@@ -241,6 +244,7 @@ class Parser {
 		case EBinop(_,_,e): isBlock(e);
 		case EUnop(_,prefix,e): !prefix && isBlock(e);
 		case EWhile(_,e): isBlock(e);
+		case EDoWhile(_,e): isBlock(e);
 		case EFor(_,_,e): isBlock(e);
 		case EReturn(e): e != null && isBlock(e);
 		case ETry(_, _, _, e): isBlock(e);
@@ -370,7 +374,7 @@ class Parser {
 			}
 			if( a.length == 1 )
 				switch( expr(a[0]) ) {
-				case EFor(_), EWhile(_):
+				case EFor(_), EWhile(_), EDoWhile(_):
 					var tmp = "__a_" + (uid++);
 					var e = mk(EBlock([
 						mk(EVar(tmp, null, mk(EArrayDecl([]), p1)), p1),
@@ -392,6 +396,8 @@ class Parser {
 			EFor(v, it, mapCompr(tmp, e2));
 		case EWhile(cond, e2):
 			EWhile(cond, mapCompr(tmp, e2));
+		case EDoWhile(cond, e2):
+			EDoWhile(cond, mapCompr(tmp, e2));
 		case EIf(cond, e1, e2) if( e2 == null ):
 			EIf(cond, mapCompr(tmp, e1), null);
 		case EBlock([e]):
@@ -476,6 +482,16 @@ class Parser {
 			var econd = parseExpr();
 			var e = parseExpr();
 			mk(EWhile(econd,e),p1,pmax(e));
+		case "do":
+			var e = parseExpr();
+			var tk = token();
+			switch(tk)
+			{
+				case TId("while"): // Valid
+				default: unexpected(tk);
+			}
+			var econd = parseExpr();
+			mk(EDoWhile(econd,e),p1,pmax(econd));
 		case "for":
 			ensure(TPOpen);
 			var tk = token();
@@ -738,7 +754,11 @@ class Parser {
 						case TOp(op):
 							if( op == ">" ) break;
 							if( op.charCodeAt(0) == ">".code ) {
+								#if hscriptPos
+								tokens.add({ t : TOp(op.substr(1)), min : tokenMax - op.length - 1, max : tokenMax });
+								#else
 								tokens.add(TOp(op.substr(1)));
+								#end								
 								break;
 							}
 						default:
@@ -858,7 +878,7 @@ class Parser {
 				case "'".code, '"'.code, '\\'.code: b.writeByte(c);
 				case '/'.code: if( allowJSON ) b.writeByte(c) else invalidChar(c);
 				case "u".code:
-					if( !allowJSON ) throw invalidChar(c);
+					if( !allowJSON ) invalidChar(c);
 					var code = null;
 					try {
 						incPos();
@@ -1058,6 +1078,8 @@ class Parser {
 				char = readChar();
 				if( char == '='.code )
 					return TOp("==");
+				else if ( char == '>'.code )
+					return TOp("=>");
 				this.char = char;
 				return TOp("=");
 			default:

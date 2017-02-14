@@ -23,6 +23,7 @@
  * DAMAGE.
  */
 package hscript;
+import haxe.PosInfos;
 import hscript.Expr;
 
 private enum Stop {
@@ -64,9 +65,18 @@ class Interp {
 		variables.set("null",null);
 		variables.set("true",true);
 		variables.set("false",false);
-		variables.set("trace",function(e) haxe.Log.trace(Std.string(e),cast { fileName : "hscript", lineNumber : 0 }));
+		variables.set("trace",function(e) haxe.Log.trace(Std.string(e), posInfos()));
+    variables.set(PROPERTY_NOT_FOUND, function(m: String, err: Void->Void): Dynamic { err(); return null; });
     variables.set(PROPERTY_NOT_FOUND, function(m: String, err: Void->Void): Dynamic { err(); return null; });
 		initOps();
+	}
+
+	public function posInfos(): PosInfos {
+		#if hscriptPos
+			if (curExpr != null)
+				return cast { fileName : curExpr.origin, lineNumber : curExpr.line };
+		#end
+		return cast { fileName : "hscript", lineNumber : 0 };
 	}
 
 	function initOps() {
@@ -121,8 +131,16 @@ class Interp {
 				l.r = v;
 		case EField(e,f):
 			v = set(expr(e),f,v);
-		case EArray(e,index):
-			expr(e)[expr(index)] = v;
+		case EArray(e, index):
+			var arr:Dynamic = expr(e);
+			var index:Dynamic = expr(index);
+			if (isMap(arr)) {
+				setMapValue(arr, index, v);
+			}
+			else {
+				arr[index] = v;
+			}
+			
 		default:
 			error(EInvalidOp("="));
 		}
@@ -148,11 +166,17 @@ class Interp {
 			var obj = expr(e);
 			v = fop(get(obj,f),expr(e2));
 			v = set(obj,f,v);
-		case EArray(e,index):
-			var arr = expr(e);
-			var index = expr(index);
-			v = fop(arr[index],expr(e2));
-			arr[index] = v;
+		case EArray(e, index):
+			var arr:Dynamic = expr(e);
+			var index:Dynamic = expr(index);
+			if (isMap(arr)) {
+				v = fop(getMapValue(arr, index), expr(e2));
+				setMapValue(arr, index, v);
+			}
+			else {
+				v = fop(arr[index],expr(e2));
+				arr[index] = v;
+			}
 		default:
 			return error(EInvalidOp(op));
 		}
@@ -183,16 +207,29 @@ class Interp {
 			} else
 				set(obj,f,v + delta);
 			return v;
-		case EArray(e,index):
-			var arr = expr(e);
-			var index = expr(index);
-			var v = arr[index];
-			if( prefix ) {
-				v += delta;
-				arr[index] = v;
-			} else
-				arr[index] = v + delta;
-			return v;
+		case EArray(e, index):
+			var arr:Dynamic = expr(e);
+			var index:Dynamic = expr(index);
+			if (isMap(arr)) {
+				var v = getMapValue(arr, index);
+				if (prefix) {
+					v += delta;
+					setMapValue(arr, index, v);
+				}
+				else {
+					setMapValue(arr, index, v + delta);
+				}
+				return v;
+			}
+			else {
+				var v = arr[index];
+				if( prefix ) {
+					v += delta;
+					arr[index] = v;
+				} else
+					arr[index] = v + delta;
+				return v;
+			}
 		default:
 			return error(EInvalidOp((delta > 0)?"++":"--"));
 		}
@@ -250,7 +287,7 @@ class Interp {
 
 	inline function error(e : #if hscriptPos ErrorDef #else Error #end ) : Dynamic {
 		#if hscriptPos
-		throw new Error(e, curExpr.pmin, curExpr.pmax);
+		throw new Error(e, curExpr.pmin, curExpr.pmax, curExpr.origin, curExpr.line);
 		#else
 		throw e;
 		#end
@@ -340,6 +377,9 @@ class Interp {
 		case EWhile(econd,e):
 			whileLoop(econd,e);
 			return null;
+		case EDoWhile(econd,e):
+			doWhileLoop(econd,e);
+			return null;
 		case EFor(v,it,e):
 			forLoop(v,it,e);
 			return null;
@@ -419,12 +459,56 @@ class Interp {
 			}
 			return f;
 		case EArrayDecl(arr):
-			var a = new Array();
-			for( e in arr )
-				a.push(expr(e));
-			return a;
-		case EArray(e,index):
-			return expr(e)[expr(index)];
+			if (arr.length > 0 && edef(arr[0]).match(EBinop("=>", _))) {
+				var isAllString:Bool = true;
+				var isAllInt:Bool = true;
+				var isAllObject:Bool = true;
+				var isAllEnum:Bool = true;
+				var keys:Array<Dynamic> = [];
+				var values:Array<Dynamic> = [];
+				for (e in arr) {
+					switch(edef(e)) {
+						case EBinop("=>", eKey, eValue): {
+							var key:Dynamic = expr(eKey);
+							var value:Dynamic = expr(eValue);
+							isAllString = isAllString && Std.is(key, String);
+							isAllInt = isAllInt && Std.is(key, Int);
+							isAllObject = isAllObject && Reflect.isObject(key);
+							isAllEnum = isAllEnum && Reflect.isEnumValue(key);
+							keys.push(key);
+							values.push(value);
+						}
+						default: throw("=> expected");
+					}
+				}
+				var map:Dynamic = {
+					if (isAllInt) new haxe.ds.IntMap<Dynamic>();
+					else if (isAllString) new haxe.ds.StringMap<Dynamic>();
+					else if (isAllEnum) new haxe.ds.EnumValueMap<Dynamic, Dynamic>();
+					else if (isAllObject) new haxe.ds.ObjectMap<Dynamic, Dynamic>();
+					else throw 'Inconsistent key types';
+				}
+				for (n in 0...keys.length) {
+					setMapValue(map, keys[n], values[n]);
+				}
+				return map;
+			}
+			else {
+				var a = new Array();
+				for ( e in arr ) {
+					a.push(expr(e));
+				}
+				return a;
+			}
+		case EArray(e, index):
+			var arr:Dynamic = expr(e);
+			var index:Dynamic = expr(index);
+			if (isMap(arr)) {
+				return getMapValue(arr, index);
+			}
+			else {
+				return arr[index];
+			}
 		case ENew(cl,params):
 			var a = new Array();
 			for( e in params )
@@ -483,6 +567,23 @@ class Interp {
 		return null;
 	}
 
+	function doWhileLoop(econd,e) {
+		var old = declared.length;
+		do {
+			try {
+				expr(e);
+			} catch( err : Stop ) {
+				switch(err) {
+				case SContinue:
+				case SBreak: break;
+				case SReturn(_): throw err;
+				}
+			}
+		}
+		while( expr(econd) == true );
+		restore(old);
+	}
+
 	function whileLoop(econd,e) {
 		var old = declared.length;
 		while( expr(econd) == true ) {
@@ -500,8 +601,8 @@ class Interp {
 	}
 
 	function makeIterator( v : Dynamic ) : Iterator<Dynamic> {
-		#if (flash && !flash9)
-		if( v.iterator != null ) v = v.iterator();
+		#if ((flash && !flash9) || php)
+		if ( v.iterator != null ) v = v.iterator();
 		#else
 		try v = v.iterator() catch( e : Dynamic ) {};
 		#end
@@ -528,19 +629,42 @@ class Interp {
 		restore(old);
 	}
 
+	inline function isMap(o:Dynamic):Bool {
+		return Std.is(o, haxe.Constraints.IMap);
+	}
+	
+	inline function getMapValue(map:Dynamic, key:Dynamic):Dynamic {
+		return cast(map, haxe.Constraints.IMap<Dynamic, Dynamic>).get(key);
+	}
+
+	inline function setMapValue(map:Dynamic, key:Dynamic, value:Dynamic):Void {
+		cast(map, haxe.Constraints.IMap<Dynamic, Dynamic>).set(key, value);
+	}
+	
 	function get( o : Dynamic, f : String ) : Dynamic {
-		if( o == null ) error(EInvalidAccess(f));
-		return Reflect.field(o,f);
+		if ( o == null ) error(EInvalidAccess(f));
+		return {
+			#if php
+				// https://github.com/HaxeFoundation/haxe/issues/4915
+				try {
+					Reflect.getProperty(o, f);
+				} catch (e:Dynamic) {
+					Reflect.field(o, f);
+				}
+			#else
+				Reflect.getProperty(o, f);
+			#end
+		}
 	}
 
 	function set( o : Dynamic, f : String, v : Dynamic ) : Dynamic {
 		if( o == null ) error(EInvalidAccess(f));
-		Reflect.setField(o,f,v);
+		Reflect.setProperty(o,f,v);
 		return v;
 	}
 
 	function fcall( o : Dynamic, f : String, args : Array<Dynamic> ) : Dynamic {
-		return call(o, Reflect.field(o, f), args);
+		return call(o, get(o, f), args);
 	}
 
 	function call( o : Dynamic, f : Dynamic, args : Array<Dynamic> ) : Dynamic {
