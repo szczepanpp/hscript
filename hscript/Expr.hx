@@ -38,6 +38,8 @@ typedef Expr = {
 	var e : ExprDef;
 	var pmin : Int;
 	var pmax : Int;
+	var origin : String;
+	var line : Int;
 }
 enum ExprDef {
 #else
@@ -67,6 +69,7 @@ enum Expr {
 	EObject( fl : Array<{ name : String, e : Expr }> );
 	ETernary( cond : Expr, e1 : Expr, e2 : Expr );
 	ESwitch( e : Expr, cases : Array<{ values : Array<Expr>, expr : Expr }>, ?defaultExpr : Expr);
+	EDoWhile( cond : Expr, e : Expr);
 }
 
 typedef Argument = { name : String, ?t : CType, ?opt : Bool };
@@ -83,10 +86,48 @@ class Error {
 	public var e : ErrorDef;
 	public var pmin : Int;
 	public var pmax : Int;
-	public function new(e, pmin, pmax) {
+	public var origin : String;
+	public var line : Int;
+	public function new(e, pmin, pmax, origin, line) {
 		this.e = e;
 		this.pmin = pmin;
 		this.pmax = pmax;
+		this.origin = origin;
+		this.line = line;
+	}
+
+	private function errorDefToString(): String {
+		switch (e) {
+			case EInvalidChar(c):
+				return "Invalid character: '"+c+"'";
+
+			case EUnexpected(s):
+				return "Unexpected token: \""+s+"\"";
+
+			case EUnterminatedString:
+				return "Unterminated string";
+
+			case EUnterminatedComment:
+				return "Unterminated comment";
+
+			case EUnknownVariable(v):
+				return "Unknown variable: "+v;
+
+			case EInvalidIterator(v):
+				return "Invalid iterator: "+v;
+
+			case EInvalidOp(op):
+				return "Invalid operator: "+op;
+
+			case EInvalidAccess(f):
+				return "Invalid access to field "+f;
+		}
+	}
+
+	public function toString(): String {
+		var message = errorDefToString();
+		message = origin + ":" + line + ": " + message;
+		return message;
 	}
 }
 enum ErrorDef {
