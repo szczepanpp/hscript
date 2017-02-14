@@ -4,10 +4,9 @@ mkdir release
 cp haxelib.json README.md extraParams.hxml release
 cd release
 mkdir hscript
+mkdir script
 cd ..
 cp hscript/*.hx release/hscript
-cd release
-mkdir script
 cp script/*.hx* release/script
 cd release/script
 haxe build.hxml
@@ -16,4 +15,5 @@ haxe -xml release/haxedoc.xml hscript.Interp hscript.Parser hscript.Bytes hscrip
 7z a -tzip release.zip release
 rm -rf release
 haxelib submit release.zip
+echo Remember to "git tag vX.Y.Z && git push --tags"
 pause
