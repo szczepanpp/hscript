@@ -602,11 +602,23 @@ class Interp {
 
 	function makeIterator( v : Dynamic ) : Iterator<Dynamic> {
 		#if ((flash && !flash9) || php)
-		if ( v.iterator != null ) v = v.iterator();
+		if(
+		#if php7
+		  untyped __php__("method_exists($v, 'iterator')")
+		#else
+		  v.iterator != null
+		#end
+		) v = v.iterator();
 		#else
 		try v = v.iterator() catch( e : Dynamic ) {};
 		#end
-		if( v.hasNext == null || v.next == null ) error(EInvalidIterator(v));
+		if(
+		#if php7
+      untyped __php__("!method_exists($v, 'hasNext') || !method_exists($v, 'next')")
+    #else
+      v.hasNext == null || v.next == null
+    #end
+    ) error(EInvalidIterator(v));
 		return v;
 	}
 
